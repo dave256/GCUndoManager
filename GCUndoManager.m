@@ -8,14 +8,6 @@
 
 #import "GCUndoManager.h"
 
-// This constant is provided by the 10.7 SDK. For 10.6 SDK and earlier, it is defined here so this will work with all SDKs.
-
-//#if MAC_OS_X_VERSION_MAX_ALLOWED < 1070
-
-NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidCloseUndoGroupNotification";
-
-//#endif
-
 // this proxy object is returned by -prepareWithInvocationTarget: if GCUM_USE_PROXY is 1. This provides a similar behaviour to NSUndoManager
 // on 10.6 so that a wider range of methods can be submitted as undo tasks. Unlike 10.6 however, it does not bypass um's -forwardInvocation:
 // method, so subclasses still work when -forwardInvocaton: is overridden.
@@ -32,7 +24,7 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 - (void)				forwardInvocation:(NSInvocation*) inv;
 - (NSMethodSignature*)	methodSignatureForSelector:(SEL) selector;
 - (BOOL)				respondsToSelector:(SEL) selector;
-- (void)				_gcum_setTarget:(id) target;
+- (void)				gcum_setTarget:(id) target;
 
 @end
 
@@ -54,44 +46,46 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 
 - (void)				beginUndoGrouping
 {
-	// starts a new group. If there's an existing one open, this is nested inside it. A group must be opened before any undo tasks can be
-	// accumulated. If groupsByEvent is YES, a group will be automatically opened and closed around the main event loop when the first
-	// valid task is submitted. Unlike NSUndoManger it is safe to merely open and then close a group with no tasks submitted
-	// - the empty group is (optionally) removed automatically. (see -endUndoGrouping)
-	
-    // only create group if undo registration is enabled
-    // otherwise groups get created when undo registration is disabled and causes GUI to say document is "Edited" on Lion
-    if ([self isUndoRegistrationEnabled]) {
-        GCUndoGroup* newGroup = [[GCUndoGroup alloc] init];
-        
-        THROW_IF_FALSE( newGroup != nil, @"unable to create new group");
-        
-        if( mGroupLevel == 0 )
-        {
-            if([self isUndoing])
-                [self pushGroupOntoRedoStack:newGroup];
-            else
-                [self pushGroupOntoUndoStack:newGroup];
-        }
-        else
-        {
-            THROW_IF_FALSE( mOpenGroupRef != nil, @"internal inconsistency - group level was > 0 but no open group was found");
-            
-            [[self currentGroup] addTask:newGroup];
-        }
-        
-        mOpenGroupRef = newGroup;
-        [newGroup release];
-        
-        if(![self isUndoing] && mGroupLevel > 0 )
-            [self checkpoint];
-        
-        ++mGroupLevel;
-        
-        NSNotificationCenter* notificationCenter = [NSNotificationCenter defaultCenter];
-        [notificationCenter postNotificationName:NSUndoManagerDidOpenUndoGroupNotification object:self];
-    }
+	// only create group if undo registration is enabled,
+	// otherwise groups get created when undo registration is disabled and causes GUI to say document is "Edited" on Lion.
+	if([self isUndoRegistrationEnabled])
+	{
+		// starts a new group. If there's an existing one open, this is nested inside it. A group must be opened before any undo tasks can be
+		// accumulated. If groupsByEvent is YES, a group will be automatically opened and closed around the main event loop when the first
+		// valid task is submitted. Unlike NSUndoManger it is safe to merely open and then close a group with no tasks submitted
+		// - the empty group is (optionally) removed automatically. (see -endUndoGrouping)
+		
+		GCUndoGroup* newGroup = [[GCUndoGroup alloc] init];
+		
+		THROW_IF_FALSE( newGroup != nil, @"unable to create new group");
+		
+		if( mGroupLevel == 0 )
+		{
+			if([self isUndoing])
+				[self pushGroupOntoRedoStack:newGroup];
+			else
+				[self pushGroupOntoUndoStack:newGroup];
+		}
+		else
+		{
+			THROW_IF_FALSE( mOpenGroupRef != nil, @"internal inconsistency - group level was > 0 but no open group was found");
+			
+			[[self currentGroup] addTask:newGroup];
+		}
+		
+		mOpenGroupRef = newGroup;
+		[newGroup release];
+		
+		if(![self isUndoing] && mGroupLevel > 0 )
+			[self checkpoint];
+		
+		++mGroupLevel;
+		
+		NSNotificationCenter* notificationCenter = [NSNotificationCenter defaultCenter];
+		[notificationCenter postNotificationName:NSUndoManagerDidOpenUndoGroupNotification object:self];
+	}
 }
+
 
 
 - (void)				endUndoGrouping
@@ -105,6 +99,7 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 		
 		--mGroupLevel;
 		
+		THROW_IF_FALSE( mGroupLevel >= 0, @"group level is negative - internal inconsistency");
 		THROW_IF_FALSE( mOpenGroupRef != nil, @"bad group state - attempt to close a nested group with no group open");
 		
 		if( mGroupLevel == 0 )
@@ -167,11 +162,19 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 		
 		// this notification is new for 10.7 - according to inside info, NSUndoManager only posts it while doing, not otherwise
 		// see: https://devforums.apple.com/thread/110036?tstart=0
+		// GCUndoManager sends this notification as well. This is necessary for NSDocument compatibility on 10.7, but may be used on
+		// earlier systems if you wish. The notification is only sent while collecting tasks, not when undoing or redoing.
 		
 		if([self undoManagerState] == kGCUndoCollectingTasks)
 		{
+			// If the deployment target is 10.7 or later, the NSUndoManagerDidCloseUndoGroupNotification global is available,
+			// otherwise we just rely on it's string value, which is unlikely to change.
 			NSNotificationCenter* notificationCenter = [NSNotificationCenter defaultCenter];
+#if MAC_OS_X_VERSION_MIN_REQUIRED >= 1070
 			[notificationCenter postNotificationName:NSUndoManagerDidCloseUndoGroupNotification object:self];
+#else
+			[notificationCenter postNotificationName:@"NSUndoManagerDidCloseUndoGroupNotification" object:self];
+#endif
 		}
 	}
 }
@@ -265,10 +268,10 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 
 
 
-- (NSUInteger)			groupingLevel
+- (NSInteger)			groupingLevel
 {
 #if CALCULATE_GROUPING_LEVEL
-	NSUInteger		level = 0;
+	NSInteger		level = 0;
 	GCUndoGroup*	group = [self currentGroup];
 	
 	while( group )
@@ -431,7 +434,7 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 	
 	if( mProxy )
 	{
-		[mProxy _gcum_setTarget:target];
+		[mProxy gcum_setTarget:target];
 		return mProxy;
 	}
 	else
@@ -1023,7 +1026,7 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 			else
 				selString = @"<subgroup>";
 			
-			[newTaskGroup setActionName:[NSString stringWithFormat:@"%@ (%d: %@)", [topGroup actionName], ++suffix, selString ]];
+			[newTaskGroup setActionName:[NSString stringWithFormat:@"%@ (%lu: %@)", [topGroup actionName], ++suffix, selString ]];
 			[self pushGroupOntoUndoStack:newTaskGroup];
 			[newTaskGroup release];
 		}
@@ -1092,7 +1095,7 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 
 - (NSString*)			description
 {
-	return [NSString stringWithFormat:@"%@ g-level = %d, state = %d, u-stack: %@, r-stack: %@", [super description], [self groupingLevel], [self undoManagerState], [self undoStack], [self redoStack]];
+	return [NSString stringWithFormat:@"%@ g-level = %ld, state = %d, u-stack: %@, r-stack: %@", [super description], [self groupingLevel], [self undoManagerState], [self undoStack], [self redoStack]];
 }
 
 
@@ -1140,7 +1143,7 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 
 - (GCUndoTask*)			taskAtIndex:(NSUInteger) indx
 {
-	THROW_IF_FALSE2( indx < [[self tasks] count], @"invalid task index (%d) in group %@", indx, self );
+	THROW_IF_FALSE2( indx < [[self tasks] count], @"invalid task index (%lu) in group %@", indx, self );
 	
 	return [[self tasks] objectAtIndex:indx];
 }
@@ -1312,7 +1315,7 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 
 - (NSString*)			description
 {
-	return [NSString stringWithFormat:@"%@ '%@' %d tasks: %@", [super description], [self actionName], [mTasks count], mTasks];
+	return [NSString stringWithFormat:@"%@ '%@' %lu tasks: %@", [super description], [self actionName], [mTasks count], mTasks];
 }
 
 @end
@@ -1486,12 +1489,11 @@ NSString* const NSUndoManagerDidCloseUndoGroupNotification = @"NSUndoManagerDidC
 }
 
 
-- (void)				_gcum_setTarget:(id) target
+- (void)				gcum_setTarget:(id) target
 {
 	THROW_IF_FALSE( target != self, @"bizarre internal inconsistency - attempt to set proxy as its own target");
 	
 	mNextTarget = target;
 }
 
-@end;
-
+@end

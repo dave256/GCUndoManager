@@ -68,7 +68,7 @@ GCUndoTaskCoalescingKind;
 - (void)				beginUndoGrouping;
 - (void)				endUndoGrouping;
 
-- (NSUInteger)			groupingLevel;
+- (NSInteger)			groupingLevel;
 - (BOOL)				groupsByEvent;
 - (void)				setGroupsByEvent:(BOOL) groupByEvent;
 
@@ -187,16 +187,6 @@ GCUndoTaskCoalescingKind;
 - (void)				explodeTopUndoAction;
 
 @end
-
-// This constant is provided by the 10.7 SDK. For 10.6 SDK and earlier, it is defined here so this will work with all SDKs.
-// GCUndoManager sends this notification as well. This is necessary for NSDocument compatibility on 10.7, but may be used on
-// earlier systems if you wish. The notification is only sent while collecting tasks, not when undoing or redoing.
-
-#if MAC_OS_X_VERSION_MAX_ALLOWED < 1070
-
-extern NSString* const NSUndoManagerDidCloseUndoGroupNotification;
-
-#endif
 
 #pragma mark -
 
